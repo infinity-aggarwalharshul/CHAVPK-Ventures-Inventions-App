@@ -18,10 +18,8 @@
 
     <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide.min.js"></script>
 
-    <script type="module">
-      // Import Firebase services
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-      import {
+    <script>
+      let initializeApp,
         getAuth,
         signInAnonymously,
         signInWithCustomToken,
@@ -29,16 +27,13 @@
         createUserWithEmailAndPassword,
         signInWithEmailAndPassword,
         signOut,
-      } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-      import {
         getFirestore,
         doc,
         getDoc,
         setDoc,
         collection,
         addDoc,
-        setLogLevel,
-      } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        setLogLevel;
 
       // --- GLOBAL APP STATE ---
       const appState = {
@@ -65,66 +60,130 @@
 
       // --- FIREBASE & APP CONFIG ---
       let app, auth, db;
+      var lucide = window.lucide || { icons: {}, createIcons() {} };
+      const brandColors = {
+        "brand-dark": "#0a092d",
+        "brand-mid": "#1a184a",
+        "brand-light": "#2b296b",
+        "brand-accent": "#00ffff",
+        "brand-glow": "#f000ff",
+      };
       const appId =
         typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
-      // Use provided Firebase config
-      try {
-        const firebaseConfig = JSON.parse(
-          typeof __firebase_config !== "undefined" ? __firebase_config : "{}"
-        );
-        app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
-        setLogLevel("Debug");
-      } catch (error) {
-        console.error("Firebase initialization error:", error);
-        renderModal(
-          "Initialization Error",
-          "Could not connect to services. Please refresh."
-        );
-      }
+      const fallbackUser = {
+        uid: "demo-user",
+        email: "guest@chavpk.in",
+        displayName: "Demo Visitor",
+        role: "guest",
+      };
 
-      // --- AUTHENTICATION ---
-      onAuthStateChanged(auth, async (user) => {
-        if (user) {
-          appState.user = user;
-          // Fetch user profile from Firestore
-          const userProfile = await getUserProfile(user.uid);
-          appState.user = { ...user, ...userProfile };
-
-          // Navigate to dashboard after login/registration
-          if (
-            appState.currentPage === "login" ||
-            appState.currentPage === "register"
-          ) {
-            appState.currentPage = "dashboard";
-          }
-        } else {
-          appState.user = null;
-          // Try custom token or anonymous sign-in
-          try {
-            if (
-              typeof __initial_auth_token !== "undefined" &&
-              __initial_auth_token
-            ) {
-              await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-              await signInAnonymously(auth);
-              console.log("Signed in anonymously");
-            }
-          } catch (error) {
-            console.error("Auth error:", error);
-          }
-        }
+      function setDemoSession() {
+        appState.user = { ...fallbackUser };
+        appState.currentPage = "dashboard";
         appState.authReady = true;
         renderApp();
-      });
+      }
+
+      async function initializeOptionalFirebase() {
+        try {
+          const firebaseConfig = JSON.parse(
+            typeof __firebase_config !== "undefined" ? __firebase_config : "{}"
+          );
+
+          if (!firebaseConfig || !firebaseConfig.projectId) {
+            console.warn("No Firebase config detected. Running in demo mode.");
+            setDemoSession();
+            return;
+          }
+
+          const firebaseAppModule = await import(
+            "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"
+          );
+          const firebaseAuthModule = await import(
+            "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"
+          );
+          const firebaseFirestoreModule = await import(
+            "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+          );
+
+          initializeApp = firebaseAppModule.initializeApp;
+          getAuth = firebaseAuthModule.getAuth;
+          signInAnonymously = firebaseAuthModule.signInAnonymously;
+          signInWithCustomToken = firebaseAuthModule.signInWithCustomToken;
+          onAuthStateChanged = firebaseAuthModule.onAuthStateChanged;
+          createUserWithEmailAndPassword =
+            firebaseAuthModule.createUserWithEmailAndPassword;
+          signInWithEmailAndPassword =
+            firebaseAuthModule.signInWithEmailAndPassword;
+          signOut = firebaseAuthModule.signOut;
+
+          getFirestore = firebaseFirestoreModule.getFirestore;
+          doc = firebaseFirestoreModule.doc;
+          getDoc = firebaseFirestoreModule.getDoc;
+          setDoc = firebaseFirestoreModule.setDoc;
+          collection = firebaseFirestoreModule.collection;
+          addDoc = firebaseFirestoreModule.addDoc;
+          setLogLevel = firebaseFirestoreModule.setLogLevel;
+
+          app = initializeApp(firebaseConfig);
+          auth = getAuth(app);
+          db = getFirestore(app);
+          if (typeof setLogLevel === "function") {
+            setLogLevel("Debug");
+          }
+
+          onAuthStateChanged(auth, async (user) => {
+            if (user) {
+              appState.user = user;
+              try {
+                const userProfile = await getUserProfile(user.uid);
+                appState.user = { ...user, ...userProfile };
+              } catch (e) {
+                console.warn("Profile fetch skipped:", e);
+              }
+
+              if (
+                appState.currentPage === "login" ||
+                appState.currentPage === "register"
+              ) {
+                appState.currentPage = "dashboard";
+              }
+            } else {
+              appState.user = { ...fallbackUser };
+              try {
+                if (
+                  typeof __initial_auth_token !== "undefined" &&
+                  __initial_auth_token
+                ) {
+                  await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                  await signInAnonymously(auth);
+                }
+              } catch (error) {
+                console.warn("Auth fallback activated:", error);
+              }
+            }
+
+            appState.authReady = true;
+            renderApp();
+          });
+        } catch (error) {
+          console.error("Firebase initialization error:", error);
+          setDemoSession();
+        }
+      }
+
+      defineLucideFallback();
+      initializeOptionalFirebase();
 
       async function handleLogout() {
         try {
-          await signOut(auth);
-          appState.user = null;
+          if (auth && typeof signOut === "function") {
+            await signOut(auth);
+          }
+          appState.user = { ...fallbackUser };
+          appState.currentPage = "home";
           navigateTo("home");
         } catch (error) {
           console.error("Logout failed:", error);
@@ -163,97 +222,74 @@
       }
 
       // --- STYLES & CONFIG ---
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ["Inter", "sans-serif"],
-            },
-            colors: {
-              "brand-dark": "#0a092d",
-              "brand-mid": "#1a184a",
-              "brand-light": "#2b296b",
-              "brand-accent": "#00ffff", // Cyan
-              "brand-glow": "#f000ff", // Magenta
-            },
-            boxShadow: {
-              "glow-cyan":
-                "0 0 15px 0 rgba(0, 255, 255, 0.5), 0 0 5px 0 rgba(0, 255, 255, 0.7)",
-              "glow-magenta":
-                "0 0 15px 0 rgba(240, 0, 255, 0.5), 0 0 5px 0 rgba(240, 0, 255, 0.7)",
-              "glow-cyan-lg":
-                "0 0 25px 3px rgba(0, 255, 255, 0.7), 0 0 10px 1px rgba(0, 255, 255, 0.8)",
-              "glow-magenta-lg":
-                "0 0 25px 3px rgba(240, 0, 255, 0.7), 0 0 10px 1px rgba(240, 0, 255, 0.8)",
-            },
-            animation: {
-              "pulse-glow-cyan":
-                "pulse-glow-cyan 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-              "pulse-glow-magenta":
-                "pulse-glow-magenta 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-              "pulse-glow-red":
-                "pulse-glow-red 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-              "subtle-gradient": "subtle-gradient 15s ease infinite",
-              "typing-dots": "typing-dots 1s infinite steps(3, end)",
-            },
-            keyframes: {
-              "pulse-glow-cyan": {
-                "0%, 100%": {
-                  opacity: 1,
-                  boxShadow: "0 0 15px 0 rgba(0, 255, 255, 0.5)",
-                },
-                "50%": {
-                  opacity: 0.8,
-                  boxShadow: "0 0 25px 3px rgba(0, 255, 255, 0.7)",
-                },
+      if (typeof tailwind !== "undefined") {
+        tailwind.config = {
+          theme: {
+            extend: {
+              fontFamily: {
+                sans: ["Inter", "sans-serif"],
               },
-              "pulse-glow-magenta": {
-                "0%, 100%": {
-                  opacity: 1,
-                  boxShadow: "0 0 15px 0 rgba(240, 0, 255, 0.5)",
-                },
-                "50%": {
-                  opacity: 0.8,
-                  boxShadow: "0 0 25px 3px rgba(240, 0, 255, 0.7)",
-                },
+              colors: brandColors,
+              boxShadow: {
+                "glow-cyan": "0 0 15px 0 rgba(0, 255, 255, 0.5), 0 0 5px 0 rgba(0, 255, 255, 0.7)",
+                "glow-magenta": "0 0 15px 0 rgba(240, 0, 255, 0.5), 0 0 5px 0 rgba(240, 0, 255, 0.7)",
+                "glow-cyan-lg": "0 0 25px 3px rgba(0, 255, 255, 0.7), 0 0 10px 1px rgba(0, 255, 255, 0.8)",
+                "glow-magenta-lg": "0 0 25px 3px rgba(240, 0, 255, 0.7), 0 0 10px 1px rgba(240, 0, 255, 0.8)",
               },
-              "pulse-glow-red": {
-                "0%, 100%": {
-                  opacity: 1,
-                  boxShadow: "0 0 15px 0 rgba(239, 68, 68, 0.6)",
-                },
-                "50%": {
-                  opacity: 0.7,
-                  boxShadow: "0 0 25px 3px rgba(239, 68, 68, 0.8)",
-                },
+              animation: {
+                "pulse-glow-cyan": "pulse-glow-cyan 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+                "pulse-glow-magenta": "pulse-glow-magenta 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+                "pulse-glow-red": "pulse-glow-red 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+                "subtle-gradient": "subtle-gradient 15s ease infinite",
               },
-              "subtle-gradient": {
-                "0%, 100%": { backgroundPosition: "0% 50%" },
-                "50%": { backgroundPosition: "100% 50%" },
-              },
-              "typing-dots": {
-                "0%": { content: '"."' },
-                "33%": { content: '".."' },
-                "66%": { content: '"..."' },
-                "100%": { content: '"."' },
+              keyframes: {
+                "pulse-glow-cyan": {
+                  "0%, 100%": { opacity: 1, boxShadow: "0 0 15px 0 rgba(0, 255, 255, 0.5)" },
+                  "50%": { opacity: 0.8, boxShadow: "0 0 25px 3px rgba(0, 255, 255, 0.7)" },
+                },
+                "pulse-glow-magenta": {
+                  "0%, 100%": { opacity: 1, boxShadow: "0 0 15px 0 rgba(240, 0, 255, 0.5)" },
+                  "50%": { opacity: 0.8, boxShadow: "0 0 25px 3px rgba(240, 0, 255, 0.7)" },
+                },
+                "pulse-glow-red": {
+                  "0%, 100%": { opacity: 1, boxShadow: "0 0 15px 0 rgba(239, 68, 68, 0.6)" },
+                  "50%": { opacity: 0.7, boxShadow: "0 0 25px 3px rgba(239, 68, 68, 0.8)" },
+                },
+                "subtle-gradient": {
+                  "0%, 100%": { backgroundPosition: "0% 50%" },
+                  "50%": { backgroundPosition: "100% 50%" },
+                },
               },
             },
-            typography: ({ theme }) => ({
-              invert: {
-                css: {
-                  p: { marginBottom: theme("spacing.6") },
-                  "ul, ol": { marginBottom: theme("spacing.6") },
-                  "h1, h2, h3, h4, h5, h6": {
-                    marginBottom: theme("spacing.4"),
-                    marginTop: theme("spacing.8"),
-                  },
-                },
-              },
-            }),
           },
-        },
-        plugins: [tailwind.plugins.typography],
-      };
+        };
+      }
+
+      function defineLucideFallback() {
+        const genericSvg = (className) => `
+          <svg class="${className}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M5 12h14M12 5v14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        `;
+
+        const iconMap = {};
+        [
+          "ArrowRight","ArrowLeft","User","MapPin","Check","X","BrainCircuit","ShieldCheck","Rocket","Menu","Laptop","Apple","Bot","Bitcoin","Video","Volume2","VolumeX","Mic","Square","Send","Languages","Settings","DownloadCloud","LogOut","Package","Scan","Box","BookOpen","Move","Rotate3d","ZoomIn","Cylinder","Globe","Save","UploadCloud","Camera","Lock","Key","Wallet","Phone","Building2","FileText","Target","BadgeCheck","Shield","Briefcase","Factory","Star","Sparkles","BarChart3","Bell","Database","CheckCircle","Users","Home","ChevronRight","ChevronLeft","Circle","ShieldAlert","Globe2","BookText","ScanLine"
+        ].forEach((name) => {
+          iconMap[name] = {
+            toSvg({ class: className = "w-5 h-5" } = {}) {
+              return genericSvg(className);
+            },
+          };
+        });
+
+        lucide = {
+          ...(window.lucide || lucide || {}),
+          icons: { ...((window.lucide && window.lucide.icons) || (lucide && lucide.icons) || {}), ...iconMap },
+          createIcons() {},
+        };
+        window.lucide = lucide;
+      }
 
       // --- SPEECH-TO-TEXT (STT) & TEXT-TO-SPEECH (TTS) ---
 
@@ -351,8 +387,12 @@
 
       // 3. TTS: API Call
       async function callGeminiTTS(textToSpeak) {
+        if (!textToSpeak || !window.GEMINI_API_KEY) {
+          return;
+        }
+
         console.log("Requesting TTS for:", textToSpeak);
-        const apiKey = ""; // Handled by environment
+        const apiKey = window.GEMINI_API_KEY;
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
 
         // Control speech style for an Indian assistant persona
@@ -479,7 +519,17 @@
 
       // --- GEMINI API CALL (TEXT & TRANSLATION) ---
       async function callGeminiAPI(payload) {
-        const apiKey = ""; // API key is handled by the environment
+        const apiKey = window.GEMINI_API_KEY || "";
+        if (!apiKey) {
+          const userInput = payload?.contents?.[payload.contents.length - 1]?.parts?.[0]?.text || "";
+          return {
+            text: userInput
+              ? `This demo is running without a live Gemini API key. Here is a safe offline response: ${userInput}`
+              : "This demo is running without a live Gemini API key. Please add a valid key to enable AI responses.",
+            sources: [],
+          };
+        }
+
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
         try {
@@ -819,7 +869,6 @@
         appState.isLoading = true;
         renderApp();
 
-        // Save final step data
         const formData = new FormData(form);
         formData.forEach((value, key) => {
           appState.registrationData[key] = value;
@@ -828,63 +877,81 @@
         const { email, password, displayName, role, ...profileData } =
           appState.registrationData;
 
+        if (!email || !password) {
+          renderModal("Registration Failed", "Email and password are required.");
+          appState.isLoading = false;
+          renderApp();
+          return;
+        }
+
         if (password !== appState.registrationData["confirm_password"]) {
           renderModal("Registration Failed", "Passwords do not match.");
           appState.isLoading = false;
-          appState.currentRegistrationStep = 1; // Go back to password step
+          appState.currentRegistrationStep = 1;
           renderApp();
           return;
         }
 
         try {
-          // 1. Create user in Auth
-          const userCredential = await createUserWithEmailAndPassword(
-            auth,
-            email,
-            password
-          );
-          const user = userCredential.user;
-
-          // 2. Save profile data to Firestore (Private Path)
-          const userDocRef = doc(
-            db,
-            `artifacts/${appId}/users/${user.uid}/profile`,
-            "data"
-          );
-          const fullProfile = {
-            uid: user.uid,
-            email: email,
-            displayName: displayName || email.split("@")[0],
-            role: role || "user", // Default role
-            ...profileData,
-            createdAt: new Date().toISOString(),
-          };
-
-          await setDoc(userDocRef, fullProfile);
-
-          // Add to public applicants list if job role is selected (Public Path)
-          if (role && role !== "user" && role !== "founder") {
-            const applicantsColRef = collection(
-              db,
-              `artifacts/${appId}/public/data/applicants`
+          if (auth && typeof createUserWithEmailAndPassword === "function") {
+            const userCredential = await createUserWithEmailAndPassword(
+              auth,
+              email,
+              password
             );
-            await addDoc(applicantsColRef, {
-              uid: user.uid,
-              displayName: displayName,
-              email: email,
-              role: role,
-              status: "Pending Review",
-              appliedAt: new Date().toISOString(),
-            });
+            const user = userCredential.user;
+
+            if (db) {
+              const userDocRef = doc(
+                db,
+                `artifacts/${appId}/users/${user.uid}/profile`,
+                "data"
+              );
+              const fullProfile = {
+                uid: user.uid,
+                email: email,
+                displayName: displayName || email.split("@")[0],
+                role: role || "user",
+                ...profileData,
+                createdAt: new Date().toISOString(),
+              };
+
+              await setDoc(userDocRef, fullProfile);
+
+              if (role && role !== "user" && role !== "founder") {
+                const applicantsColRef = collection(
+                  db,
+                  `artifacts/${appId}/public/data/applicants`
+                );
+                await addDoc(applicantsColRef, {
+                  uid: user.uid,
+                  displayName: displayName,
+                  email: email,
+                  role: role,
+                  status: "Pending Review",
+                  appliedAt: new Date().toISOString(),
+                });
+              }
+            }
+          } else {
+            appState.user = {
+              ...fallbackUser,
+              uid: `demo-${Date.now()}`,
+              email,
+              displayName: displayName || email.split("@")[0],
+              role: role || "user",
+            };
           }
 
-          // onAuthStateChanged will catch the new user and navigate to dashboard
           console.log("User registered successfully");
           appState.registrationData = {};
           appState.currentRegistrationStep = 1;
+          appState.currentPage = "dashboard";
+          appState.isLoading = false;
+          renderApp();
         } catch (error) {
           console.error("Registration failed:", error);
-          renderModal("Registration Failed", error.message);
+          renderModal("Registration Failed", error.message || "Could not create your account. Please try again.");
           appState.isLoading = false;
           renderApp();
         }
@@ -935,7 +1002,29 @@
       }
 
       function handleCurrencyConversion() {
-        // (Function content is unchanged, omitted for brevity)
+        const form = document.getElementById("currency-form");
+        if (!form) return;
+
+        const from = form.currencyFrom?.value || "USD";
+        const to = form.currencyTo?.value || "INR";
+        const inputAmount = Number(form.currencyAmount?.value || 1);
+        const amount = Number.isFinite(inputAmount) ? inputAmount : 1;
+
+        const rates = {
+          USD: 1,
+          INR: 83.5,
+          EUR: 0.93,
+          GBP: 0.79,
+          AED: 3.67,
+          SGD: 1.35,
+          JPY: 157.2,
+        };
+
+        const usdValue = amount / (rates[from] || 1);
+        const result = usdValue * (rates[to] || rates.INR);
+
+        appState.currencyConversion = { from, to, amount, result: result.toFixed(2) };
+        renderApp();
       }
 
       function handleDownloadClient() {
@@ -1113,21 +1202,11 @@
                     <nav class="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-20">
                         <a href="#" data-nav="home" class="flex items-center space-x-2">
                             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M12 2L2 7V17L12 22L22 17V7L12 2Z" stroke="${
-                                  tailwind.theme.extend.colors["brand-accent"]
-                                }" stroke-width="1.5"/>
-                                <path d="M12 22V12" stroke="${
-                                  tailwind.theme.extend.colors["brand-accent"]
-                                }" stroke-width="1.5"/>
-                                <path d="M22 7L12 12" stroke="${
-                                  tailwind.theme.extend.colors["brand-accent"]
-                                }" stroke-width="1.5"/>
-                                <path d="M2 7L12 12" stroke="${
-                                  tailwind.theme.extend.colors["brand-accent"]
-                                }" stroke-width="1.5"/>
-                                <path d="M17 4.5L7 9.5" stroke="${
-                                  tailwind.theme.extend.colors["brand-glow"]
-                                }" stroke-width="1.5"/>
+                                <path d="M12 2L2 7V17L12 22L22 17V7L12 2Z" stroke="${brandColors["brand-accent"]}" stroke-width="1.5"/>
+                                <path d="M12 22V12" stroke="${brandColors["brand-accent"]}" stroke-width="1.5"/>
+                                <path d="M22 7L12 12" stroke="${brandColors["brand-accent"]}" stroke-width="1.5"/>
+                                <path d="M2 7L12 12" stroke="${brandColors["brand-accent"]}" stroke-width="1.5"/>
+                                <path d="M17 4.5L7 9.5" stroke="${brandColors["brand-glow"]}" stroke-width="1.5"/>
                             </svg>
                             <span class="text-xl font-bold text-white">The ChitraHarsha <span class="text-brand-accent">SarvangaNavasrijan</span></span>
                         </a>
@@ -1193,7 +1272,48 @@
       }
 
       function renderFooter() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <footer class="bg-brand-dark border-t border-brand-light/50 text-gray-300">
+            <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-10">
+              <div class="grid gap-8 md:grid-cols-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-white mb-4">SarvangaNavasrijan</h3>
+                  <p class="text-sm text-gray-400">
+                    Future-ready innovation platform for creators, founders, and institutions building impactful, compliant, Indian-first solutions.
+                  </p>
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Company</h4>
+                  <ul class="space-y-2 text-sm">
+                    <li><a href="#" data-nav="about" class="hover:text-brand-accent">About Us</a></li>
+                    <li><a href="#" data-nav="blogs" class="hover:text-brand-accent">Blogs</a></li>
+                    <li><a href="#" data-nav="contact" class="hover:text-brand-accent">Contact</a></li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Legal</h4>
+                  <ul class="space-y-2 text-sm">
+                    <li><a href="#" data-nav="policy" class="hover:text-brand-accent">Privacy Policy</a></li>
+                    <li><a href="#" data-nav="terms" class="hover:text-brand-accent">Terms & Conditions</a></li>
+                    <li><a href="#" data-nav="faq" class="hover:text-brand-accent">FAQs</a></li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Contact</h4>
+                  <ul class="space-y-2 text-sm">
+                    <li>support@chavpk.in</li>
+                    <li>+91 80 0000 0000</li>
+                    <li>Global outreach • Remote-first</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="mt-10 border-t border-brand-light/50 pt-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-400">
+                <p>© 2026 ChitraHarsha VPK Ventures Pvt. Ltd. All rights reserved.</p>
+                <p>Made in India • Compliant by design</p>
+              </div>
+            </div>
+          </footer>
+        `;
       }
 
       function renderHomePage() {
@@ -1342,27 +1462,98 @@
       }
 
       function renderLoginPage() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-20">
+            <div class="mx-auto max-w-md rounded-2xl border border-brand-light/50 bg-brand-mid/80 p-8 shadow-glow-cyan">
+              <div class="mb-8 text-center">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand-accent/10 text-brand-accent">
+                  ${lucide.icons.ShieldCheck.toSvg({ class: "w-8 h-8" })}
+                </div>
+                <h1 class="text-3xl font-bold text-white">Welcome back</h1>
+                <p class="mt-2 text-sm text-gray-400">Access your innovation dashboard securely.</p>
+              </div>
+
+              <form id="login-form" class="space-y-5">
+                <div>
+                  <label for="email" class="mb-2 block text-sm text-gray-300">Email address</label>
+                  <input id="email" name="email" type="email" required class="w-full rounded-lg border border-brand-light bg-brand-dark/60 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-accent focus:outline-none" placeholder="you@example.com" />
+                </div>
+                <div>
+                  <label for="password" class="mb-2 block text-sm text-gray-300">Password</label>
+                  <input id="password" name="password" type="password" required class="w-full rounded-lg border border-brand-light bg-brand-dark/60 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-accent focus:outline-none" placeholder="••••••••" />
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-brand-accent px-4 py-3 font-semibold text-brand-dark transition hover:bg-white shadow-glow-cyan">
+                  Sign In
+                </button>
+              </form>
+
+              <div class="mt-6 text-center text-sm text-gray-400">
+                Don’t have an account?
+                <button data-nav="register" class="ml-2 font-medium text-brand-accent hover:underline">Create one</button>
+              </div>
+            </div>
+          </div>
+        `;
       }
 
       // --- REGISTRATION PAGE (MULTI-STEP) ---
       function renderRegisterPage() {
-        // (Function content is unchanged, omitted for brevity)
+        const steps = {
+          1: renderRegisterStep1(),
+          2: renderRegisterStep2(),
+          3: renderRegisterStep3(),
+          4: renderRegisterStep4(),
+        };
+
+        return `
+          <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-20">
+            <div class="mx-auto max-w-2xl rounded-2xl border border-brand-light/50 bg-brand-mid/80 p-8 shadow-glow-cyan">
+              <div class="mb-6 flex items-center justify-between">
+                <div>
+                  <p class="text-sm uppercase tracking-[0.2em] text-brand-accent">Registration</p>
+                  <h1 class="mt-2 text-3xl font-bold text-white">Create your account</h1>
+                </div>
+                <span class="rounded-full border border-brand-light bg-brand-dark/40 px-3 py-1 text-sm text-gray-300">Step ${appState.currentRegistrationStep}/4</span>
+              </div>
+              ${steps[appState.currentRegistrationStep] || steps[1]}
+            </div>
+          </div>
+        `;
       }
 
-      function renderRegisterInput(
-        label,
-        name,
-        type = "text",
-        placeholder = "",
-        required = true,
-        icon
-      ) {
-        // (Function content is unchanged, omitted for brevity)
+      function renderRegisterInput(label, name, type = "text", placeholder = "", required = true, icon) {
+        return `
+          <div>
+            <label for="${name}" class="mb-2 block text-sm font-medium text-gray-300">${label}</label>
+            <div class="relative rounded-md shadow-sm">
+              ${icon ? `<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">${icon}</div>` : ""}
+              <input
+                id="${name}"
+                name="${name}"
+                type="${type}"
+                ${required ? "required" : ""}
+                placeholder="${placeholder}"
+                value="${appState.registrationData[name] || ""}"
+                class="block w-full rounded-lg border border-brand-light bg-brand-dark/60 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-accent focus:outline-none ${icon ? "pl-10" : ""}"
+              />
+            </div>
+          </div>
+        `;
       }
 
       function renderRegisterStep1() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <form id="step-1-form" class="space-y-6">
+            ${renderRegisterInput("Email Address", "email", "email", "yourname@company.com", true, lucide.icons.User.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            ${renderRegisterInput("Password", "password", "password", "Create a strong password", true, lucide.icons.Lock.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            ${renderRegisterInput("Confirm Password", "confirm_password", "password", "Repeat your password", true, lucide.icons.Key.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            <div class="flex justify-end">
+              <button type="button" data-reg-next="2" class="inline-flex items-center rounded-md bg-brand-accent px-6 py-3 font-semibold text-brand-dark transition hover:bg-white shadow-glow-cyan">
+                Next ${lucide.icons.ArrowRight.toSvg({ class: "w-5 h-5 ml-2" })}
+              </button>
+            </div>
+          </form>
+        `;
       }
 
       function renderRegisterStep2() {
@@ -1481,11 +1672,58 @@
       }
 
       function renderRegisterStep3() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <form id="step-3-form" class="space-y-6">
+            <div class="grid gap-4 md:grid-cols-2">
+              ${renderRegisterInput("Mobile Number", "phone", "tel", "+91 98765 43210", false, lucide.icons.Phone.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+              ${renderRegisterInput("Business/Institution Name", "company", "text", "ChitraHarsha Labs", false, lucide.icons.Building2.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            </div>
+            <div>
+              <label for="legalStatus" class="mb-2 block text-sm text-gray-300">Legal Entity Type</label>
+              <select id="legalStatus" name="legalStatus" class="w-full rounded-lg border border-brand-light bg-brand-dark/60 px-4 py-3 text-white focus:border-brand-accent focus:outline-none">
+                <option value="Individual">Individual</option>
+                <option value="Proprietorship">Proprietorship</option>
+                <option value="Private Limited">Private Limited</option>
+                <option value="LLP">LLP</option>
+                <option value="NGO">NGO / Trust</option>
+                <option value="Academic Institution">Academic Institution</option>
+              </select>
+            </div>
+            <div class="flex justify-between">
+              <button type="button" data-reg-prev="2" class="inline-flex items-center rounded-md border border-brand-light bg-brand-light/30 px-6 py-3 font-semibold text-white transition hover:bg-brand-light">
+                ${lucide.icons.ArrowLeft.toSvg({ class: "w-5 h-5 mr-2" })} Previous
+              </button>
+              <button type="button" data-reg-next="4" class="inline-flex items-center rounded-md bg-brand-accent px-6 py-3 font-semibold text-brand-dark transition hover:bg-white shadow-glow-cyan">
+                Next ${lucide.icons.ArrowRight.toSvg({ class: "w-5 h-5 ml-2" })}
+              </button>
+            </div>
+          </form>
+        `;
       }
 
       function renderRegisterStep4() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <form id="registration-form-final" class="space-y-6">
+            <div class="rounded-xl border border-brand-light/50 bg-brand-dark/30 p-4 text-sm text-gray-300">
+              <p class="font-medium text-white">Compliance notice</p>
+              <p class="mt-2">By registering, you confirm that the information provided is accurate and that your use of the platform complies with Indian laws, including the IT Act, 2000, DPDP Act, 2023, and applicable sectoral regulations.</p>
+            </div>
+            ${renderRegisterInput("GST / Tax ID", "gstin", "text", "29ABCDE1234F1Z5", false, lucide.icons.FileText.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            ${renderRegisterInput("Preferred Sector", "sector", "text", "AI, Robotics, BioTech", false, lucide.icons.Target.toSvg({ class: "w-5 h-5 text-gray-400" }))}
+            <div class="flex items-center space-x-3 rounded-lg border border-brand-light/50 bg-brand-dark/30 p-4 text-sm text-gray-300">
+              <input id="acceptTerms" name="acceptTerms" type="checkbox" required class="h-4 w-4 rounded border-brand-light bg-brand-dark text-brand-accent focus:ring-brand-accent" />
+              <label for="acceptTerms">I agree to the platform terms, privacy policy, and applicable Indian legal obligations.</label>
+            </div>
+            <div class="flex justify-between">
+              <button type="button" data-reg-prev="3" class="inline-flex items-center rounded-md border border-brand-light bg-brand-light/30 px-6 py-3 font-semibold text-white transition hover:bg-brand-light">
+                ${lucide.icons.ArrowLeft.toSvg({ class: "w-5 h-5 mr-2" })} Previous
+              </button>
+              <button type="submit" class="inline-flex items-center rounded-md bg-brand-accent px-6 py-3 font-semibold text-brand-dark transition hover:bg-white shadow-glow-cyan">
+                Complete Registration
+              </button>
+            </div>
+          </form>
+        `;
       }
 
       // --- DASHBOARD PAGE (MODULAR) ---
@@ -1603,7 +1841,38 @@
       }
 
       function renderDashboardModule_CurrencyConverter() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <div class="bg-brand-mid/70 backdrop-blur-md p-6 rounded-xl border border-brand-light/50 shadow-lg">
+            <h3 class="text-xl font-semibold text-white mb-4">Currency Converter</h3>
+            <form id="currency-form" class="space-y-4">
+              <div class="grid grid-cols-2 gap-3">
+                <select id="currencyFrom" name="currencyFrom" class="rounded-md border border-brand-light bg-brand-dark/60 px-3 py-2 text-sm text-white">
+                  <option value="USD" ${appState.currencyConversion.from === "USD" ? "selected" : ""}>USD</option>
+                  <option value="INR" ${appState.currencyConversion.from === "INR" ? "selected" : ""}>INR</option>
+                  <option value="EUR" ${appState.currencyConversion.from === "EUR" ? "selected" : ""}>EUR</option>
+                  <option value="GBP" ${appState.currencyConversion.from === "GBP" ? "selected" : ""}>GBP</option>
+                </select>
+                <select id="currencyTo" name="currencyTo" class="rounded-md border border-brand-light bg-brand-dark/60 px-3 py-2 text-sm text-white">
+                  <option value="INR" ${appState.currencyConversion.to === "INR" ? "selected" : ""}>INR</option>
+                  <option value="USD" ${appState.currencyConversion.to === "USD" ? "selected" : ""}>USD</option>
+                  <option value="EUR" ${appState.currencyConversion.to === "EUR" ? "selected" : ""}>EUR</option>
+                  <option value="AED" ${appState.currencyConversion.to === "AED" ? "selected" : ""}>AED</option>
+                </select>
+              </div>
+              <input id="currencyAmount" name="currencyAmount" type="number" min="0" step="0.01" value="${appState.currencyConversion.amount || 1}" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-3 py-2 text-white" />
+              <button type="button" id="convert-currency-btn" class="w-full rounded-md bg-brand-accent px-4 py-2 font-medium text-brand-dark hover:bg-white transition-all">
+                Convert
+              </button>
+              <div class="rounded-md border border-brand-light bg-brand-dark/40 p-3 text-sm text-gray-200">
+                <div class="text-xs uppercase tracking-wider text-gray-400">Converted value</div>
+                <div class="mt-1 text-2xl font-bold text-brand-accent">
+                  ${appState.currencyConversion.result}
+                </div>
+                <div class="mt-1 text-xs text-gray-400">${appState.currencyConversion.amount || 1} ${appState.currencyConversion.from} = ${appState.currencyConversion.result} ${appState.currencyConversion.to}</div>
+              </div>
+            </form>
+          </div>
+        `;
       }
 
       function renderDashboardModule_CoreFeatures() {
@@ -1849,7 +2118,25 @@
       }
 
       function renderDashboardModule_Founder() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <div class="bg-brand-mid/70 backdrop-blur-md p-6 rounded-xl border border-brand-light/50 shadow-lg">
+            <h3 class="text-xl font-semibold text-white mb-4">Founder Control Center</h3>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="rounded-lg bg-brand-light/50 p-4">
+                <p class="text-sm text-gray-400">Operational health</p>
+                <p class="mt-2 text-3xl font-bold text-brand-accent">98.4%</p>
+              </div>
+              <div class="rounded-lg bg-brand-light/50 p-4">
+                <p class="text-sm text-gray-400">Projects launched</p>
+                <p class="mt-2 text-3xl font-bold text-brand-accent">24</p>
+              </div>
+              <div class="rounded-lg bg-brand-light/50 p-4 md:col-span-2">
+                <p class="text-sm text-gray-400">Next milestone</p>
+                <p class="mt-2 text-lg text-white">Launch compliance-ready commercial pilot for AI-enabled manufacturing automation.</p>
+              </div>
+            </div>
+          </div>
+        `;
       }
 
       function renderDashboardModule_Placements() {
@@ -1926,8 +2213,97 @@
             `;
       }
 
-      // (renderAboutPage, renderBlogsPage, renderContactPage, etc. are unchanged, omitted for brevity)
-      // ... (All static page render functions are the same as the previous version) ...
+      function renderAboutPage() {
+        const content = `
+          <h2>Who we are</h2>
+          <p>ChitraHarsha VPK Ventures Pvt. Ltd. is building a future-focused innovation platform for research, product design, manufacturing enablement, and commercialization. Our mission is to help thought leaders, creators, startups, and institutions move from concept to validated market reality with structured AI guidance, secure operations, and compliant workflows.</p>
+          <h2>Our approach</h2>
+          <ul>
+            <li>AI-assisted ideation and product development</li>
+            <li>Secure data governance and compliance by design</li>
+            <li>Made-in-India entrepreneurship support</li>
+            <li>Commercial readiness for B2B and B2C innovation</li>
+          </ul>
+          <h2>Why it matters</h2>
+          <p>We help organizations reduce time-to-market, improve decision quality, and implement responsible digital transformation aligned with Indian legal and regulatory frameworks.</p>
+        `;
+        return renderPageWrapper("About Us", content);
+      }
+
+      function renderBlogsPage() {
+        const content = `
+          <h2>Featured insights</h2>
+          <p><strong>AI for modern innovation teams:</strong> Smart systems can accelerate ideation, research, prototyping, and decision support while preserving human oversight.</p>
+          <p><strong>Responsible commercialization:</strong> Product launch strategies must consider consumer trust, privacy safeguards, and sector-specific compliance before scaling.</p>
+          <p><strong>Made in India momentum:</strong> Indian innovation ecosystems can combine public trust, research, and deep-tech prototyping to create globally competitive offerings.</p>
+        `;
+        return renderPageWrapper("Blogs & Insights", content);
+      }
+
+      function renderContactPage() {
+        const content = `
+          <form id="contact-form" class="space-y-5">
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Full Name</label>
+              <input type="text" name="name" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="Your name" required />
+            </div>
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Email</label>
+              <input type="email" name="email" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="you@example.com" required />
+            </div>
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Message</label>
+              <textarea name="message" rows="5" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="Tell us about your project" required></textarea>
+            </div>
+            <button type="submit" class="rounded-md bg-brand-accent px-6 py-3 font-semibold text-brand-dark hover:bg-white transition-all">Send Message</button>
+          </form>
+        `;
+        return renderPageWrapper("Contact Us", content);
+      }
+
+      function renderFAQPage() {
+        const content = `
+          <h2>Frequently asked questions</h2>
+          <h3>Is the platform compliant with Indian data and privacy laws?</h3>
+          <p>Yes. The design and operating model are structured around privacy-by-design principles, consent handling, and lawful processing aligned with Indian statutory expectations.</p>
+          <h3>Can I use the platform for commercial product work?</h3>
+          <p>Yes. The platform is intended for commercial and enterprise-grade workflows, with security, privacy, and governance controls built in.</p>
+          <h3>What kind of users does it support?</h3>
+          <p>It supports creators, founders, institutional teams, procurement units, and hiring processes across sectors.</p>
+        `;
+        return renderPageWrapper("FAQs", content);
+      }
+
+      function renderPolicyPage() {
+        const content = `
+          <h2>Privacy policy overview</h2>
+          <p>We are committed to protecting personal data, minimizing collection, and using information only for clearly stated purposes such as account management, service delivery, customer support, legal compliance, and platform security.</p>
+          <h3>Data handling principles</h3>
+          <ul>
+            <li>Collect only the information needed for the requested service</li>
+            <li>Use secure storage and controlled access</li>
+            <li>Provide transparency about purpose and retention</li>
+            <li>Honor user rights to access, correction, and deletion where legally applicable</li>
+          </ul>
+          <p>For production deployments, users should implement a formal privacy notice, consent flow, retention schedule, and cross-border transfer review in line with the DPDP Act, 2023 and related guidance.</p>
+        `;
+        return renderPageWrapper("Privacy Policy", content);
+      }
+
+      function renderTermsPage() {
+        const content = `
+          <h2>Terms and conditions</h2>
+          <p>Use of the platform is subject to compliance with applicable law, responsible use, anti-fraud practices, and good-faith cooperation with the service operator.</p>
+          <h3>Important points</h3>
+          <ul>
+            <li>Users are responsible for the accuracy of their submissions</li>
+            <li>Commercial use should comply with all applicable Indian and international obligations</li>
+            <li>The platform may be updated to improve security, performance, and regulatory readiness</li>
+            <li>Users must not misuse data, infringe intellectual property, or attempt harmful activity</li>
+          </ul>
+        `;
+        return renderPageWrapper("Terms & Conditions", content);
+      }
 
       // --- UI COMPONENTS (MODAL, LOADER) ---
 
@@ -1984,7 +2360,17 @@
       }
 
       function renderLoader() {
-        // (Function content is unchanged, omitted for brevity)
+        return `
+          <div class="fixed inset-0 z-[200] bg-brand-dark/90 backdrop-blur-md flex items-center justify-center">
+            <div class="text-center">
+              <svg class="mx-auto h-16 w-16 animate-spin text-brand-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <h3 class="mt-4 animate-pulse text-2xl font-semibold text-white">Loading secure workspace...</h3>
+            </div>
+          </div>
+        `;
       }
 
       // --- FEATURE-SPECIFIC MODALS ---
@@ -2177,22 +2563,88 @@
 
       // --- Static Page Renders ---
       function renderAboutPage() {
-        // (Unchanged)
+        const content = `
+          <h2>Who we are</h2>
+          <p>ChitraHarsha VPK Ventures Pvt. Ltd. builds high-trust innovation ecosystems for AI-enabled creation, product commercialization, and digital transformation across India.</p>
+          <h3>Mission</h3>
+          <p>To help creators, founders, and institutions move from ideas to secure, scalable, and legally conscious commercial outcomes.</p>
+          <h3>Operating model</h3>
+          <ul>
+            <li>AI-assisted research and design</li>
+            <li>Secure user onboarding and compliance-first workflows</li>
+            <li>Commercial readiness for product and platform growth</li>
+          </ul>
+        `;
+        return renderPageWrapper("About Us", content);
       }
+
       function renderBlogsPage() {
-        // (Unchanged)
+        const content = `
+          <h2>Insights</h2>
+          <p><strong>Responsible AI:</strong> Product teams must combine automation with human review, especially in regulated or public-facing systems.</p>
+          <p><strong>Commercial readiness:</strong> Launch planning should include legal, security, and user trust checks before scaling.</p>
+        `;
+        return renderPageWrapper("Blogs & Insights", content);
       }
+
       function renderContactPage() {
-        // (Unchanged)
+        const content = `
+          <form id="contact-form" class="space-y-5">
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Full Name</label>
+              <input type="text" name="name" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="Your name" required />
+            </div>
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Email</label>
+              <input type="email" name="email" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="you@example.com" required />
+            </div>
+            <div>
+              <label class="block text-sm text-gray-300 mb-2">Message</label>
+              <textarea name="message" rows="5" class="w-full rounded-md border border-brand-light bg-brand-dark/60 px-4 py-3 text-white" placeholder="Tell us about your project" required></textarea>
+            </div>
+            <button type="submit" class="rounded-md bg-brand-accent px-6 py-3 font-semibold text-brand-dark hover:bg-white transition-all">Send Message</button>
+          </form>
+        `;
+        return renderPageWrapper("Contact Us", content);
       }
+
       function renderFAQPage() {
-        // (Unchanged)
+        const content = `
+          <h2>Frequently asked questions</h2>
+          <h3>Is this platform suitable for commercial deployment?</h3>
+          <p>Yes. The system is designed for commercial and institutional use and is structured to support secure onboarding and operational scaling.</p>
+          <h3>What legal considerations matter?</h3>
+          <p>Privacy, consent, security, and lawful processing should be reviewed before production launch, especially for customer data and payment workflows.</p>
+        `;
+        return renderPageWrapper("FAQs", content);
       }
+
       function renderPolicyPage() {
-        // (Unchanged)
+        const content = `
+          <h2>Privacy policy overview</h2>
+          <p>We aim to process data lawfully, transparently, and minimally. This includes secure storage, limited collection, and clear purpose-based handling of personal information.</p>
+          <h3>Principles</h3>
+          <ul>
+            <li>Consent and transparency</li>
+            <li>Data minimization</li>
+            <li>Reasonable security measures</li>
+            <li>Retention and deletion review</li>
+          </ul>
+        `;
+        return renderPageWrapper("Privacy Policy", content);
       }
+
       function renderTermsPage() {
-        // (Unchanged)
+        const content = `
+          <h2>Terms & conditions</h2>
+          <p>Users must follow all applicable Indian legal requirements, honor platform security expectations, and use the service responsibly.</p>
+          <ul>
+            <li>Do not misuse personal data</li>
+            <li>Maintain accuracy in your submissions</li>
+            <li>Follow platform-specific agreements and laws</li>
+          </ul>
+        `;
+        return renderPageWrapper("Terms & Conditions", content);
       }
 
       // --- INITIALIZATION ---
